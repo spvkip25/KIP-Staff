@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Login - GAS Management System</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .fade-in {
+      animation: fadeIn 0.7s ease both;
+    }
+
+    .slide-up {
+      animation: slideUp 0.65s ease both;
+    }
+
+    .float-soft {
+      animation: floatSoft 5s ease-in-out infinite;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes floatSoft {
+      0%, 100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-12px);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    /***********************
+     * GITHUB FRONTEND CONFIG
+     ***********************/
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyklRwZ2w1uUTBBHCypsZnSmLexi-9TBLHr6EmtmE3v0ffJtOZVdEJVUpK4VJQAyzO9/exec';
+
+    const SESSION_KEY = 'gas_auth_token';
+
+    const PAGE_ROUTES = {
+      AdminDashboard: 'admindashboard.html',
+      TeamLeaderDashboard: 'teamleaderdashboard.html',
+      ManagementDashboard: 'managementdashboard.html',
+      Index: 'index.html',
+    };
+
+    function getPageUrl(page) {
+      const route = PAGE_ROUTES[page] || PAGE_ROUTES.Index;
+      return route;
+    }
+
+    async function runGas(action, ...params) {
+      if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === 'PASTE_YOUR_GAS_WEB_APP_URL_HERE') {
+        throw new Error('GAS_WEB_APP_URL belum diatur.');
+      }
+
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          params,
+        }),
+      });
+
+      const text = await response.text();
+
+      try {
+        return JSON.parse(text);
+      } catch (error) {
+        throw new Error('Response server bukan JSON valid.');
+      }
+    }
+
+    function App() {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [showPassword, setShowPassword] = useState(false);
+      const [loading, setLoading] = useState(false);
+      const [checkingSession, setCheckingSession] = useState(true);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        handleGetUserSession();
+      }, []);
+
+      async function handleGetUserSession() {
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+
+          if (!token) {
+            setCheckingSession(false);
+            return;
+          }
+
+          const response = await runGas('getUserSession', token);
+
+          if (response.success && response.redirectPage) {
+            window.location.href = getPageUrl(response.redirectPage);
+            return;
+          }
+
+          localStorage.removeItem(SESSION_KEY);
+
+        } catch (err) {
+          localStorage.removeItem(SESSION_KEY);
+        } finally {
+          setCheckingSession(false);
+        }
+      }
+
+      async function handleLogin(e) {
+        e.preventDefault();
+
+        setError('');
+
+        if (!username.trim() || !password.trim()) {
+          setError('Username dan password wajib diisi.');
+          return;
+        }
+
+        setLoading(true);
+
+        try {
+          const response = await runGas('loginUser', username, password);
+
+          if (!response.success) {
+            setError(response.message || 'Login gagal.');
+            return;
+          }
+
+          localStorage.setItem(SESSION_KEY, response.token);
+
+          if (response.redirectPage) {
+            window.location.href = getPageUrl(response.redirectPage);
+            return;
+          }
+
+          setError('Dashboard tidak ditemukan untuk role ini.');
+
+        } catch (err) {
+          setError(err.message || 'Terjadi error koneksi ke server.');
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      if (checkingSession) {
+        return (
+          <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+            <div className="text-center fade-in">
+              <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-white/80 text-sm">Checking session...</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-950 overflow-hidden relative">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.35),_transparent_35%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.25),_transparent_35%)]"></div>
+
+          <div className="absolute top-16 left-8 sm:left-20 w-24 h-24 sm:w-36 sm:h-36 rounded-full bg-blue-500/20 blur-2xl float-soft"></div>
+          <div className="absolute bottom-16 right-8 sm:right-24 w-28 h-28 sm:w-44 sm:h-44 rounded-full bg-emerald-400/20 blur-2xl float-soft"></div>
+
+          <main className="relative min-h-screen flex items-center justify-center px-4 sm:px-6 lg:px-8 py-8">
+            <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+
+              <section className="hidden lg:block fade-in">
+                <div className="max-w-lg">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 border border-white/10 text-white/80 text-sm mb-6">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    Role Based Auth Session
+                  </div>
+
+                  <h1 className="text-5xl xl:text-6xl font-black text-white leading-tight mb-6">
+                    Login system for every role.
+                  </h1>
+
+                  <p className="text-white/60 text-lg leading-relaxed">
+                    Sistem login berbasis Google Apps Script dengan role Admin,
+                    Team Leader, dan Management.
+                  </p>
+
+                  <div className="mt-8 grid grid-cols-3 gap-3">
+                    <RoleBadge label="Admin" />
+                    <RoleBadge label="Team Leader" />
+                    <RoleBadge label="Management" />
+                  </div>
+                </div>
+              </section>
+
+              <section className="w-full flex justify-center">
+                <div className="w-full max-w-md bg-white/10 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl p-5 sm:p-7 md:p-8 slide-up">
+                  <div className="text-center mb-7">
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white text-slate-950 flex items-center justify-center mx-auto mb-4 shadow-lg">
+                      <span className="text-2xl font-black">M</span>
+                    </div>
+
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white">
+                      Welcome Back
+                    </h2>
+
+                    <p className="text-white/50 text-sm mt-2">
+                      Login sesuai role untuk masuk dashboard.
+                    </p>
+                  </div>
+
+                  {error && (
+                    <div className="mb-5 rounded-xl bg-red-500/15 border border-red-400/20 px-4 py-3 text-sm text-red-100">
+                      {error}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleLogin} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-white/80 mb-2">
+                        Username
+                      </label>
+
+                      <input
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="Enter username"
+                        autoComplete="username"
+                        className="w-full h-12 rounded-xl bg-white/10 border border-white/10 text-white placeholder-white/35 px-4 outline-none focus:ring-2 focus:ring-blue-400/70 transition"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-white/80 mb-2">
+                        Password
+                      </label>
+
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="Enter password"
+                          autoComplete="current-password"
+                          className="w-full h-12 rounded-xl bg-white/10 border border-white/10 text-white placeholder-white/35 px-4 pr-20 outline-none focus:ring-2 focus:ring-blue-400/70 transition"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/60 hover:text-white transition"
+                        >
+                          {showPassword ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full h-12 rounded-xl bg-white text-slate-950 font-bold hover:bg-slate-200 active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {loading ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="w-4 h-4 border-2 border-slate-950/20 border-t-slate-950 rounded-full animate-spin"></span>
+                          Logging in...
+                        </span>
+                      ) : (
+                        'Login'
+                      )}
+                    </button>
+                  </form>
+
+                  <div className="mt-6 rounded-2xl bg-black/20 border border-white/10 p-4">
+                    <p className="text-xs text-white/40 mb-3">Sample account:</p>
+
+                    <div className="space-y-2 text-xs text-white/60">
+                      <SampleAccount role="Admin" username="admin" password="admin123" />
+                      <SampleAccount role="Team Leader" username="leader01" password="123456" />
+                      <SampleAccount role="Management" username="management01" password="123456" />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    function RoleBadge({ label }) {
+      return (
+        <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-3 text-center">
+          <p className="text-white text-sm font-semibold">{label}</p>
+        </div>
+      );
+    }
+
+    function SampleAccount({ role, username, password }) {
+      return (
+        <div className="flex items-center justify-between gap-3">
+          <span>{role}</span>
+          <span className="font-mono">{username} / {password}</span>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
