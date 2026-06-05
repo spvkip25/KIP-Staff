@@ -1,0 +1,1681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+  <title>Team Leader Dashboard</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --dock-bottom: max(18px, env(safe-area-inset-bottom));
+    }
+
+    * {
+      -webkit-tap-highlight-color: transparent;
+      transition:
+        background-color 420ms ease,
+        color 420ms ease,
+        border-color 420ms ease,
+        box-shadow 420ms ease,
+        opacity 260ms ease;
+    }
+
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .fade-in { animation: fadeIn 0.45s ease both; }
+    .slide-up { animation: slideUp 0.5s ease both; }
+    .dock-pop { animation: dockPop 0.45s cubic-bezier(.2,.9,.2,1.2) both; }
+    .modal-pop { animation: modalPop 0.28s cubic-bezier(.2,.9,.2,1.1) both; }
+    .toast-in { animation: toastIn 0.32s ease both; }
+    .theme-switching { pointer-events: none; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes dockPop {
+      from { opacity: 0; transform: translateY(20px) scale(.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes modalPop {
+      from { opacity: 0; transform: translateY(18px) scale(.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(14px) scale(.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    input, select { color-scheme: light; }
+    .dark input, .dark select { color-scheme: dark; }
+
+    .glass-light {
+      background: rgba(255,255,255,.74);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .glass-dark {
+      background: rgba(15,23,42,.74);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .dock-glass-light {
+      background: rgba(255,255,255,.78);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    }
+
+    .dock-glass-dark {
+      background: rgba(15,23,42,.80);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, .45);
+      border-radius: 999px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, .7);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      .fade-in,
+      .slide-up,
+      .dock-pop,
+      .modal-pop,
+      .toast-in {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+
+    /***********************
+     * GITHUB FRONTEND CONFIG
+     ***********************/
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyklRwZ2w1uUTBBHCypsZnSmLexi-9TBLHr6EmtmE3v0ffJtOZVdEJVUpK4VJQAyzO9/exec';
+
+    const SESSION_KEY = 'gas_auth_token';
+    const THEME_KEY = 'team_leader_dashboard_theme';
+    const SUPPLY_SETTINGS_KEY = 'team_leader_supply_color_settings';
+
+    const MONTH_NAMES = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    const DEFAULT_SUPPLY_SETTINGS = {
+      lowMax: 50,
+      mediumMin: 51,
+      mediumMax: 100,
+      highMin: 101,
+    };
+
+    async function runGas(action, ...params) {
+      if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === 'PASTE_YOUR_GAS_WEB_APP_URL_HERE') {
+        throw new Error('GAS_WEB_APP_URL belum diatur.');
+      }
+
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          params,
+        }),
+      });
+
+      const text = await response.text();
+
+      try {
+        return JSON.parse(text);
+      } catch (error) {
+        throw new Error('Response server bukan JSON valid.');
+      }
+    }
+
+    function App() {
+      const today = new Date();
+
+      const [theme, setTheme] = useState(localStorage.getItem(THEME_KEY) || 'dark');
+      const [activeMenu, setActiveMenu] = useState('dashboard');
+
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+
+      const [toast, setToast] = useState(null);
+      const [confirmDialog, setConfirmDialog] = useState(null);
+
+      const [inputDate, setInputDate] = useState(new Date().toISOString().slice(0, 10));
+      const [supplyRows, setSupplyRows] = useState([]);
+      const [records, setRecords] = useState([]);
+
+      const [recapMonth, setRecapMonth] = useState(today.getMonth() + 1);
+      const [recapYear, setRecapYear] = useState(today.getFullYear());
+      const [monthlyRecap, setMonthlyRecap] = useState(null);
+
+      const [supplySettings, setSupplySettings] = useState(() => {
+        try {
+          const saved = localStorage.getItem(SUPPLY_SETTINGS_KEY);
+          return saved ? JSON.parse(saved) : DEFAULT_SUPPLY_SETTINGS;
+        } catch (error) {
+          return DEFAULT_SUPPLY_SETTINGS;
+        }
+      });
+
+      const [filters, setFilters] = useState({
+        date: '',
+        month: '',
+        year: '',
+      });
+
+      const [accessError, setAccessError] = useState('');
+      const isDark = theme === 'dark';
+
+      useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+        localStorage.setItem(THEME_KEY, theme);
+      }, [theme]);
+
+      useEffect(() => {
+        localStorage.setItem(SUPPLY_SETTINGS_KEY, JSON.stringify(supplySettings));
+      }, [supplySettings]);
+
+      useEffect(() => {
+        boot();
+      }, []);
+
+      function smoothToggleTheme() {
+        document.body.classList.add('theme-switching');
+
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+
+        setTimeout(() => {
+          document.body.classList.remove('theme-switching');
+        }, 450);
+      }
+
+      function showToast(type, text) {
+        setToast({ type, text });
+
+        setTimeout(() => {
+          setToast(null);
+        }, 3400);
+      }
+
+      function showSuccess(text) {
+        showToast('success', text);
+      }
+
+      function showError(text) {
+        showToast('error', text);
+      }
+
+      function openConfirm(config) {
+        setConfirmDialog({
+          title: config.title || 'Are you sure?',
+          message: config.message || 'This action needs confirmation.',
+          confirmText: config.confirmText || 'Confirm',
+          cancelText: config.cancelText || 'Cancel',
+          tone: config.tone || 'danger',
+          onConfirm: config.onConfirm,
+        });
+      }
+
+      function closeConfirm() {
+        setConfirmDialog(null);
+      }
+
+      async function boot() {
+        setLoading(true);
+        setAccessError('');
+
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+
+          if (!token) {
+            redirectToLogin();
+            return;
+          }
+
+          const sessionResponse = await runGas('getUserSession', token);
+
+          if (!sessionResponse.success) {
+            localStorage.removeItem(SESSION_KEY);
+            redirectToLogin();
+            return;
+          }
+
+          if (sessionResponse.user.role !== 'Team Leader') {
+            setAccessError('Akses ditolak. Halaman ini hanya untuk Team Leader.');
+            setLoading(false);
+            return;
+          }
+
+          setUser(sessionResponse.user);
+
+          await Promise.all([
+            loadSupplyMatrix(token, inputDate),
+            loadRecords(token),
+            loadMonthlyRecap(token, recapMonth, recapYear),
+          ]);
+
+        } catch (err) {
+          setAccessError(err.message || 'Gagal memuat Team Leader Dashboard.');
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      function redirectToLogin() {
+        window.location.href = 'index.html';
+      }
+
+      async function loadSupplyMatrix(tokenParam, dateParam) {
+        const token = tokenParam || localStorage.getItem(SESSION_KEY);
+        const response = await runGas('getDailySupplyInputMatrix', token, dateParam || inputDate);
+
+        if (response.success) {
+          setSupplyRows(response.data || []);
+        } else {
+          showError(response.message || 'Gagal memuat matrix supplies.');
+        }
+      }
+
+      async function loadRecords(tokenParam, customFilters) {
+        const token = tokenParam || localStorage.getItem(SESSION_KEY);
+        const response = await runGas('getDailySupplies', token, customFilters || filters);
+
+        if (response.success) {
+          setRecords(response.data || []);
+        } else {
+          showError(response.message || 'Gagal memuat records supplies.');
+        }
+      }
+
+      async function loadMonthlyRecap(tokenParam, monthParam, yearParam) {
+        const token = tokenParam || localStorage.getItem(SESSION_KEY);
+        const response = await runGas('getMonthlySuppliesRecap', token, Number(monthParam), Number(yearParam));
+
+        if (response.success) {
+          setMonthlyRecap(response.data);
+        } else {
+          showError(response.message || 'Gagal memuat monthly supplies recap.');
+        }
+      }
+
+      async function handleChangeInputDate(value) {
+        setInputDate(value);
+        await loadSupplyMatrix(null, value);
+      }
+
+      function updateSupplyValue(index, field, value) {
+        setSupplyRows(prev => {
+          const copy = [...prev];
+
+          copy[index] = {
+            ...copy[index],
+            [field]: value,
+            isEdited:
+              field === 'paperUsed'
+                ? String(value) !== String(copy[index].originalPaperUsed || '')
+                : String(value) !== String(copy[index].originalPrintingUsed || ''),
+          };
+
+          if (
+            String(copy[index].paperUsed || '') !== String(copy[index].originalPaperUsed || '') ||
+            String(copy[index].printingUsed || '') !== String(copy[index].originalPrintingUsed || '')
+          ) {
+            copy[index].isEdited = true;
+          }
+
+          return copy;
+        });
+      }
+
+      function confirmSaveSupply() {
+        const rowsToSave = supplyRows.filter(row => {
+          const hasPaper = row.paperUsed !== '' && row.paperUsed !== null && row.paperUsed !== undefined;
+          const hasPrinting = row.printingUsed !== '' && row.printingUsed !== null && row.printingUsed !== undefined;
+          return hasPaper || hasPrinting;
+        });
+
+        if (!rowsToSave.length) {
+          showError('Belum ada data paper/printing yang diisi.');
+          return;
+        }
+
+        openConfirm({
+          title: 'Save all supplies?',
+          message: 'Data supplies per inventory item akan disimpan. Jika item di tanggal yang sama sudah ada, sistem akan update tanpa duplicate.',
+          confirmText: 'Save All',
+          tone: 'success',
+          onConfirm: saveSupplyBulk,
+        });
+      }
+
+      async function saveSupplyBulk() {
+        closeConfirm();
+        setSaving(true);
+
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+
+          const rowsToSave = supplyRows.filter(row => {
+            const hasPaper = row.paperUsed !== '' && row.paperUsed !== null && row.paperUsed !== undefined;
+            const hasPrinting = row.printingUsed !== '' && row.printingUsed !== null && row.printingUsed !== undefined;
+            return hasPaper || hasPrinting;
+          });
+
+          const response = await runGas('saveDailySuppliesBulk', token, inputDate, rowsToSave);
+
+          if (!response.success) {
+            showError(response.message || 'Gagal menyimpan supplies.');
+            return;
+          }
+
+          await Promise.all([
+            loadSupplyMatrix(token, inputDate),
+            loadRecords(token),
+            loadMonthlyRecap(token, recapMonth, recapYear),
+          ]);
+
+          showSuccess(response.message || 'Supplies berhasil disimpan.');
+
+        } catch (err) {
+          showError(err.message || 'Terjadi error saat menyimpan supplies.');
+        } finally {
+          setSaving(false);
+        }
+      }
+
+      function requestDeleteSupply(id) {
+        openConfirm({
+          title: 'Delete supply record?',
+          message: 'Data paper dan printing inventory item ini akan dihapus. Aksi ini tidak bisa dibatalkan.',
+          confirmText: 'Delete',
+          tone: 'danger',
+          onConfirm: () => deleteSupply(id),
+        });
+      }
+
+      async function deleteSupply(id) {
+        closeConfirm();
+        setSaving(true);
+
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+          const response = await runGas('deleteDailySupply', token, id);
+
+          if (!response.success) {
+            showError(response.message || 'Gagal menghapus supplies.');
+            return;
+          }
+
+          await Promise.all([
+            loadSupplyMatrix(token, inputDate),
+            loadRecords(token),
+            loadMonthlyRecap(token, recapMonth, recapYear),
+          ]);
+
+          showSuccess(response.message || 'Supplies berhasil dihapus.');
+
+        } catch (err) {
+          showError(err.message || 'Terjadi error saat menghapus supplies.');
+        } finally {
+          setSaving(false);
+        }
+      }
+
+      async function applyFilters() {
+        await loadRecords(null, filters);
+      }
+
+      async function clearFilters() {
+        const empty = { date: '', month: '', year: '' };
+        setFilters(empty);
+        await loadRecords(null, empty);
+      }
+
+      async function handleChangeRecapMonth(value) {
+        const month = Number(value);
+        setRecapMonth(month);
+        await loadMonthlyRecap(null, month, recapYear);
+      }
+
+      async function handleChangeRecapYear(value) {
+        const year = Number(value);
+        setRecapYear(year);
+        await loadMonthlyRecap(null, recapMonth, year);
+      }
+
+      function saveSettings(newSettings) {
+        setSupplySettings(newSettings);
+        showSuccess('Settings warna supplies berhasil disimpan.');
+      }
+
+      function resetSettings() {
+        setSupplySettings(DEFAULT_SUPPLY_SETTINGS);
+        showSuccess('Settings dikembalikan ke default.');
+      }
+
+      function requestLogout() {
+        openConfirm({
+          title: 'Logout from dashboard?',
+          message: 'Session kamu akan diakhiri dan kamu akan kembali ke halaman login.',
+          confirmText: 'Logout',
+          tone: 'neutral',
+          onConfirm: handleLogout,
+        });
+      }
+
+      async function handleLogout() {
+        closeConfirm();
+
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+          await runGas('logoutUser', token);
+        } catch (err) {
+          console.error(err);
+        } finally {
+          localStorage.removeItem(SESSION_KEY);
+          redirectToLogin();
+        }
+      }
+
+      const stats = useMemo(() => {
+        const totalPaper = records.reduce((sum, item) => sum + Number(item['Paper Used'] || 0), 0);
+        const totalPrinting = records.reduce((sum, item) => sum + Number(item['Printing Used'] || 0), 0);
+        const filledToday = supplyRows.filter(row => {
+          const hasPaper = row.paperUsed !== '' && row.paperUsed !== null && row.paperUsed !== undefined;
+          const hasPrinting = row.printingUsed !== '' && row.printingUsed !== null && row.printingUsed !== undefined;
+          return hasPaper || hasPrinting;
+        }).length;
+        const savedToday = supplyRows.filter(row => row.isSaved).length;
+
+        return {
+          totalPaper,
+          totalPrinting,
+          totalRecords: records.length,
+          filledToday,
+          savedToday,
+        };
+      }, [records, supplyRows]);
+
+      const pageClass = isDark
+        ? 'dark min-h-screen bg-[#020617] text-white'
+        : 'min-h-screen bg-slate-100 text-slate-950';
+
+      if (loading) {
+        return (
+          <div className={pageClass}>
+            <div className="min-h-screen flex items-center justify-center px-4">
+              <div className="text-center fade-in">
+                <div className={`w-12 h-12 border-4 rounded-full animate-spin mx-auto mb-4 ${
+                  isDark ? 'border-white/20 border-t-white' : 'border-slate-300 border-t-slate-950'
+                }`}></div>
+                <p className={isDark ? 'text-white/70 text-sm' : 'text-slate-500 text-sm'}>
+                  Loading Team Leader Dashboard...
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (accessError && !user) {
+        return (
+          <div className={pageClass}>
+            <div className="min-h-screen flex items-center justify-center px-4">
+              <div className={cardClass(isDark) + ' max-w-md w-full rounded-3xl p-6 text-center'}>
+                <h1 className="text-xl font-black mb-2">Access Error</h1>
+                <p className="text-red-500 text-sm mb-5">{accessError}</p>
+                <button onClick={handleLogout} className={primaryButtonClass(isDark)}>
+                  Back to Login
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className={pageClass}>
+          <BackgroundGlow isDark={isDark} />
+
+          <div className="relative min-h-screen pb-32">
+            <Header
+              user={user}
+              isDark={isDark}
+              theme={theme}
+              onToggleTheme={smoothToggleTheme}
+              onLogout={requestLogout}
+            />
+
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+              <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 slide-up">
+                <StatCard isDark={isDark} label="Paper Used" value={stats.totalPaper} icon="paper" />
+                <StatCard isDark={isDark} label="Printing Used" value={stats.totalPrinting} icon="printer" />
+                <StatCard isDark={isDark} label="Filled Today" value={stats.filledToday} icon="edit" />
+                <StatCard isDark={isDark} label="Saved Today" value={stats.savedToday} icon="check" />
+              </section>
+
+              {activeMenu === 'dashboard' && (
+                <DashboardView
+                  isDark={isDark}
+                  recapMonth={recapMonth}
+                  recapYear={recapYear}
+                  monthlyRecap={monthlyRecap}
+                  supplySettings={supplySettings}
+                  onChangeMonth={handleChangeRecapMonth}
+                  onChangeYear={handleChangeRecapYear}
+                />
+              )}
+
+              {activeMenu === 'input' && (
+                <InputView
+                  isDark={isDark}
+                  inputDate={inputDate}
+                  supplyRows={supplyRows}
+                  saving={saving}
+                  supplySettings={supplySettings}
+                  onChangeDate={handleChangeInputDate}
+                  onChangeValue={updateSupplyValue}
+                  onSave={confirmSaveSupply}
+                />
+              )}
+
+              {activeMenu === 'records' && (
+                <RecordsView
+                  isDark={isDark}
+                  records={records}
+                  filters={filters}
+                  setFilters={setFilters}
+                  applyFilters={applyFilters}
+                  clearFilters={clearFilters}
+                  deleteSupply={requestDeleteSupply}
+                  supplySettings={supplySettings}
+                />
+              )}
+
+              {activeMenu === 'settings' && (
+                <SettingsView
+                  isDark={isDark}
+                  settings={supplySettings}
+                  onSave={saveSettings}
+                  onReset={resetSettings}
+                />
+              )}
+
+              {activeMenu === 'profile' && (
+                <ProfileView isDark={isDark} user={user} />
+              )}
+            </main>
+
+            <MacDock
+              isDark={isDark}
+              activeMenu={activeMenu}
+              setActiveMenu={setActiveMenu}
+            />
+
+            <Toast toast={toast} isDark={isDark} />
+            <ConfirmDialog dialog={confirmDialog} isDark={isDark} onClose={closeConfirm} />
+          </div>
+        </div>
+      );
+    }
+
+    function DashboardView({ isDark, recapMonth, recapYear, monthlyRecap, supplySettings, onChangeMonth, onChangeYear }) {
+      const summary = monthlyRecap?.summary || {};
+      const classes = monthlyRecap?.classes || [];
+      const dailyTotals = monthlyRecap?.dailyTotals || [];
+      const daysInMonth = monthlyRecap?.daysInMonth || 31;
+
+      const maxPaper = Math.max(...dailyTotals.map(item => Number(item.paperTotal || 0)), 1);
+      const maxPrinting = Math.max(...dailyTotals.map(item => Number(item.printingTotal || 0)), 1);
+
+      return (
+        <section className="space-y-6 slide-up">
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6'}>
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Icon name="chart" className="w-8 h-8" />
+                <div>
+                  <h2 className="text-xl font-black">Supplies Dashboard</h2>
+                  <p className={mutedClass(isDark)}>Monthly recap supplies per inventory item.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 w-full lg:w-auto">
+                <Select
+                  isDark={isDark}
+                  label="Month"
+                  value={recapMonth}
+                  onChange={onChangeMonth}
+                  options={MONTH_NAMES.map((name, index) => ({
+                    value: index + 1,
+                    label: name,
+                  }))}
+                />
+
+                <Input
+                  isDark={isDark}
+                  label="Year"
+                  type="number"
+                  value={recapYear}
+                  onChange={onChangeYear}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <StatCard isDark={isDark} label="Total Paper" value={summary.totalPaper || 0} icon="paper" />
+            <StatCard isDark={isDark} label="Total Printing" value={summary.totalPrinting || 0} icon="printer" />
+            <StatCard isDark={isDark} label="Active Items" value={summary.activeClassCount || 0} icon="layers" />
+            <StatCard isDark={isDark} label="Filled Records" value={summary.filledRecords || 0} icon="database" />
+          </div>
+
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6'}>
+            <div className="flex items-center justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-lg font-black">Daily Usage Chart</h2>
+                <p className={mutedClass(isDark)}>Total paper dan printing per tanggal.</p>
+              </div>
+              <span className={badgeClass(isDark)}>{MONTH_NAMES[recapMonth - 1]} {recapYear}</span>
+            </div>
+
+            <div className="overflow-x-auto custom-scroll pb-2">
+              <div className="min-w-[900px] h-72 flex items-end gap-2">
+                {dailyTotals.map(item => {
+                  const paperHeight = Math.max(8, (Number(item.paperTotal || 0) / maxPaper) * 210);
+                  const printingHeight = Math.max(8, (Number(item.printingTotal || 0) / maxPrinting) * 210);
+
+                  return (
+                    <div key={item.day} className="flex-1 flex flex-col items-center gap-2">
+                      <div className="text-[10px] font-black opacity-70">{item.paperTotal}/{item.printingTotal}</div>
+                      <div className="flex items-end gap-1 h-[220px]">
+                        <div
+                          title="Paper Used"
+                          className={getSupplyColorClass(Number(item.paperTotal || 0), supplySettings, 'bar')}
+                          style={{ height: `${paperHeight}px`, width: '10px' }}
+                        ></div>
+                        <div
+                          title="Printing Used"
+                          className="rounded-t-xl bg-blue-500/70"
+                          style={{ height: `${printingHeight}px`, width: '10px' }}
+                        ></div>
+                      </div>
+                      <div className="text-[10px] opacity-60">{item.day}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black">
+              <span className="px-3 py-2 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/20">Paper</span>
+              <span className="px-3 py-2 rounded-full bg-blue-500/15 text-blue-500 border border-blue-500/20">Printing</span>
+            </div>
+          </div>
+
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 overflow-hidden'}>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-lg font-black">Horizontal Recap Per Inventory Item</h2>
+                <p className={mutedClass(isDark)}>Kolom tanggal 1 sampai {daysInMonth}. Format: Paper / Printing.</p>
+              </div>
+              <SupplyLegend settings={supplySettings} />
+            </div>
+
+            {classes.length === 0 ? (
+              <EmptyState isDark={isDark} text="Belum ada inventory detail active atau data supplies bulan ini." />
+            ) : (
+              <div className="max-h-[62vh] overflow-auto custom-scroll">
+                <table className="w-full min-w-[1180px] text-xs">
+                  <thead className={isDark ? 'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-xl' : 'sticky top-0 z-10 bg-white/95 backdrop-blur-xl'}>
+                    <tr className={isDark ? 'border-b border-white/10 text-white/50' : 'border-b border-slate-200 text-slate-500'}>
+                      <th className="sticky left-0 z-20 py-3 pr-4 text-left min-w-[230px] bg-inherit">Inventory Item</th>
+                      {Array.from({ length: daysInMonth }, (_, i) => (
+                        <th key={i + 1} className="py-3 px-2 text-center min-w-[58px]">{i + 1}</th>
+                      ))}
+                      <th className="py-3 px-3 text-center min-w-[90px]">Total</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {classes.map(row => (
+                      <tr key={row.classId} className={isDark ? 'border-b border-white/5' : 'border-b border-slate-100'}>
+                        <td className={isDark ? 'sticky left-0 z-10 py-3 pr-4 bg-slate-900/95' : 'sticky left-0 z-10 py-3 pr-4 bg-white/95'}>
+                          <p className="font-black">{row.trainerName}</p>
+                          <p className="opacity-55">{row.jamSection} • {row.level}</p>
+                        </td>
+
+                        {row.days.map(day => (
+                          <td key={day.day} className="py-2 px-2 text-center">
+                            <span className={getSupplyColorClass(Number(day.paperUsed || 0) + Number(day.printingUsed || 0), supplySettings, 'cell')}>
+                              {day.paperUsed === '' && day.printingUsed === ''
+                                ? '-'
+                                : `${day.paperUsed || 0}/${day.printingUsed || 0}`}
+                            </span>
+                          </td>
+                        ))}
+
+                        <td className="py-3 px-3 text-center font-black">
+                          {row.totalPaper}/{row.totalPrinting}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
+
+    function InputView({ isDark, inputDate, supplyRows, saving, supplySettings, onChangeDate, onChangeValue, onSave }) {
+      return (
+        <section className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-6 slide-up">
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 h-fit'}>
+            <div className="flex items-center gap-3 mb-5">
+              <Icon name="edit" className="w-7 h-7" />
+              <div>
+                <h2 className="text-lg font-black">Daily Supplies Input</h2>
+                <p className={mutedClass(isDark)}>Input supplies untuk semua inventory item.</p>
+              </div>
+            </div>
+
+            <Input
+              isDark={isDark}
+              label="Tanggal Input"
+              type="date"
+              value={inputDate}
+              onChange={onChangeDate}
+            />
+
+            <div className={softBoxClass(isDark) + ' mt-5 rounded-2xl p-4'}>
+              <p className="text-sm font-bold mb-2">Anti Duplicate Logic</p>
+              <p className={mutedClass(isDark)}>
+                Data unik berdasarkan Branch + Date + Jam/Section + Level + Name.
+                Kalau sudah ada, sistem update. Kalau belum ada, sistem create.
+              </p>
+            </div>
+
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className={primaryButtonClass(isDark) + ' mt-5'}
+            >
+              {saving ? 'Saving...' : 'Save All Supplies'}
+            </button>
+          </div>
+
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 overflow-hidden'}>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-lg font-black">Inventory Supplies Matrix</h2>
+                <p className={mutedClass(isDark)}>Isi paper dan printing per inventory item.</p>
+              </div>
+
+              <span className={badgeClass(isDark)}>{supplyRows.length} Items</span>
+            </div>
+
+            {supplyRows.length === 0 ? (
+              <EmptyState isDark={isDark} text="Belum ada inventory detail active untuk branch ini." />
+            ) : (
+              <div className="lg:hidden max-h-[62vh] overflow-y-auto custom-scroll pr-1 space-y-3">
+                {supplyRows.map((row, index) => (
+                  <div key={row.classId || index} className={softBoxClass(isDark) + ' rounded-2xl p-4'}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <p className="font-black">{row.trainerName}</p>
+                        <p className={mutedClass(isDark)}>{row.jamSection} • {row.level}</p>
+                      </div>
+                      <StatusPill isSaved={row.isSaved} isEdited={row.isEdited} />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input
+                        isDark={isDark}
+                        label="Paper Used"
+                        type="number"
+                        value={row.paperUsed}
+                        onChange={(value) => onChangeValue(index, 'paperUsed', value)}
+                        placeholder="0"
+                      />
+
+                      <Input
+                        isDark={isDark}
+                        label="Printing Used"
+                        type="number"
+                        value={row.printingUsed}
+                        onChange={(value) => onChangeValue(index, 'printingUsed', value)}
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="mt-3">
+                      <span className={getSupplyColorClass(Number(row.paperUsed || 0) + Number(row.printingUsed || 0), supplySettings, 'cell')}>
+                        {`${row.paperUsed || 0}/${row.printingUsed || 0}`}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {supplyRows.length > 0 && (
+              <div className="hidden lg:block max-h-[62vh] overflow-auto custom-scroll">
+                <table className="w-full min-w-[880px] text-sm">
+                  <thead className={isDark ? 'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-xl' : 'sticky top-0 z-10 bg-white/95 backdrop-blur-xl'}>
+                    <tr className={isDark ? 'text-white/45 border-b border-white/10' : 'text-slate-500 border-b border-slate-200'}>
+                      <th className="py-3 pr-4 text-left">Jam/Section</th>
+                      <th className="py-3 pr-4 text-left">Level</th>
+                      <th className="py-3 pr-4 text-left">Name</th>
+                      <th className="py-3 pr-4 text-left">Paper Used</th>
+                      <th className="py-3 pr-4 text-left">Printing Used</th>
+                      <th className="py-3 pr-4 text-left">Preview</th>
+                      <th className="py-3 pr-4 text-left">Status</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {supplyRows.map((row, index) => (
+                      <tr key={row.classId || index} className={isDark ? 'border-b border-white/5' : 'border-b border-slate-100'}>
+                        <td className="py-3 pr-4 font-semibold">{row.jamSection}</td>
+                        <td className="py-3 pr-4">{row.level}</td>
+                        <td className="py-3 pr-4">{row.trainerName}</td>
+                        <td className="py-3 pr-4 w-36">
+                          <input
+                            type="number"
+                            value={row.paperUsed}
+                            placeholder="0"
+                            onChange={(e) => onChangeValue(index, 'paperUsed', e.target.value)}
+                            className={inputClass(isDark)}
+                          />
+                        </td>
+                        <td className="py-3 pr-4 w-36">
+                          <input
+                            type="number"
+                            value={row.printingUsed}
+                            placeholder="0"
+                            onChange={(e) => onChangeValue(index, 'printingUsed', e.target.value)}
+                            className={inputClass(isDark)}
+                          />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className={getSupplyColorClass(Number(row.paperUsed || 0) + Number(row.printingUsed || 0), supplySettings, 'cell')}>
+                            {`${row.paperUsed || 0}/${row.printingUsed || 0}`}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <StatusPill isSaved={row.isSaved} isEdited={row.isEdited} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
+
+    function RecordsView({ isDark, records, filters, setFilters, applyFilters, clearFilters, deleteSupply, supplySettings }) {
+      return (
+        <section className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 slide-up overflow-hidden'}>
+          <div className="flex items-center gap-3 mb-5">
+            <Icon name="database" className="w-7 h-7" />
+            <div>
+              <h2 className="text-lg font-black">Supplies Records</h2>
+              <p className={mutedClass(isDark)}>Data tersimpan per inventory item di DailySupplies.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+            <Input
+              isDark={isDark}
+              label="Filter Date"
+              type="date"
+              value={filters.date}
+              onChange={(value) => setFilters(prev => ({ ...prev, date: value }))}
+            />
+
+            <Input
+              isDark={isDark}
+              label="Month"
+              value={filters.month}
+              onChange={(value) => setFilters(prev => ({ ...prev, month: value }))}
+              placeholder="June"
+            />
+
+            <Input
+              isDark={isDark}
+              label="Year"
+              value={filters.year}
+              onChange={(value) => setFilters(prev => ({ ...prev, year: value }))}
+              placeholder="2026"
+            />
+
+            <div className="flex items-end gap-2">
+              <button onClick={applyFilters} className={primaryButtonClass(isDark)}>
+                Filter
+              </button>
+
+              <button onClick={clearFilters} className={secondaryButtonClass(isDark)}>
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <ResponsiveTable
+            isDark={isDark}
+            headers={['Date', 'Jam/Section', 'Level', 'Name', 'Paper', 'Printing', 'Action']}
+            rows={records.map(item => [
+              item.Date,
+              item['Jam/Section'],
+              item.Level,
+              item['Trainer Name'],
+              <span className={getSupplyColorClass(item['Paper Used'], supplySettings, 'cell')}>
+                {item['Paper Used']}
+              </span>,
+              <span className={getSupplyColorClass(item['Printing Used'], supplySettings, 'cell')}>
+                {item['Printing Used']}
+              </span>,
+              <button
+                onClick={() => deleteSupply(item.ID)}
+                className="h-9 px-3 rounded-xl bg-red-500/15 text-red-500 border border-red-500/20 text-xs font-black"
+              >
+                Delete
+              </button>
+            ])}
+            emptyText="Belum ada data supplies."
+            maxHeight="62vh"
+          />
+        </section>
+      );
+    }
+
+    function SettingsView({ isDark, settings, onSave, onReset }) {
+      const [form, setForm] = useState(settings);
+
+      useEffect(() => {
+        setForm(settings);
+      }, [settings]);
+
+      function submit(e) {
+        e.preventDefault();
+
+        const clean = {
+          lowMax: Number(form.lowMax),
+          mediumMin: Number(form.mediumMin),
+          mediumMax: Number(form.mediumMax),
+          highMin: Number(form.highMin),
+        };
+
+        if (
+          isNaN(clean.lowMax) ||
+          isNaN(clean.mediumMin) ||
+          isNaN(clean.mediumMax) ||
+          isNaN(clean.highMin)
+        ) {
+          return;
+        }
+
+        onSave(clean);
+      }
+
+      return (
+        <section className="grid grid-cols-1 lg:grid-cols-[430px_1fr] gap-6 slide-up">
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 h-fit'}>
+            <div className="flex items-center gap-3 mb-5">
+              <Icon name="settings" className="w-7 h-7" />
+              <div>
+                <h2 className="text-lg font-black">Supply Color Settings</h2>
+                <p className={mutedClass(isDark)}>Atur batas warna paper + printing.</p>
+              </div>
+            </div>
+
+            <form onSubmit={submit} className="space-y-4">
+              <Input
+                isDark={isDark}
+                label="Merah jika ≤"
+                type="number"
+                value={form.lowMax}
+                onChange={(value) => setForm(prev => ({ ...prev, lowMax: value }))}
+              />
+
+              <Input
+                isDark={isDark}
+                label="Kuning mulai dari"
+                type="number"
+                value={form.mediumMin}
+                onChange={(value) => setForm(prev => ({ ...prev, mediumMin: value }))}
+              />
+
+              <Input
+                isDark={isDark}
+                label="Kuning sampai"
+                type="number"
+                value={form.mediumMax}
+                onChange={(value) => setForm(prev => ({ ...prev, mediumMax: value }))}
+              />
+
+              <Input
+                isDark={isDark}
+                label="Hijau jika ≥"
+                type="number"
+                value={form.highMin}
+                onChange={(value) => setForm(prev => ({ ...prev, highMin: value }))}
+              />
+
+              <div className="flex gap-3">
+                <button type="submit" className={primaryButtonClass(isDark)}>
+                  Save Settings
+                </button>
+
+                <button type="button" onClick={onReset} className={secondaryButtonClass(isDark)}>
+                  Reset
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6'}>
+            <h2 className="text-lg font-black mb-5">Preview</h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <PreviewColor label={`≤ ${form.lowMax}`} value="30" className="bg-red-500/15 text-red-500 border-red-500/20" />
+              <PreviewColor label={`${form.mediumMin} - ${form.mediumMax}`} value="75" className="bg-amber-500/15 text-amber-500 border-amber-500/20" />
+              <PreviewColor label={`≥ ${form.highMin}`} value="120" className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20" />
+            </div>
+
+            <div className={softBoxClass(isDark) + ' rounded-2xl p-4 mt-5'}>
+              <p className="text-sm font-bold mb-2">Default rules</p>
+              <p className={mutedClass(isDark)}>
+                Default: ≤50 merah, 51–100 kuning, ≥101 hijau. Warna dihitung dari total Paper + Printing per inventory item.
+              </p>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    function ProfileView({ isDark, user }) {
+      return (
+        <section className={cardClass(isDark) + ' rounded-3xl p-6 slide-up max-w-2xl'}>
+          <div className="flex items-center gap-4 mb-6">
+            <div className={isDark ? 'w-16 h-16 rounded-3xl bg-white text-slate-950 flex items-center justify-center' : 'w-16 h-16 rounded-3xl bg-slate-950 text-white flex items-center justify-center'}>
+              <Icon name="user" className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h2 className="text-xl font-black">{user?.username}</h2>
+              <p className={mutedClass(isDark)}>{user?.role} • {user?.branch}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <InfoBox isDark={isDark} label="Username" value={user?.username} />
+            <InfoBox isDark={isDark} label="Role" value={user?.role} />
+            <InfoBox isDark={isDark} label="Branch" value={user?.branch} />
+            <InfoBox isDark={isDark} label="Login Time" value={user?.loginTime} />
+          </div>
+        </section>
+      );
+    }
+
+    function Header({ user, isDark, theme, onToggleTheme, onLogout }) {
+      return (
+        <header className={isDark ? 'sticky top-0 z-30 bg-[#020617]/80 backdrop-blur-xl border-b border-white/10' : 'sticky top-0 z-30 bg-slate-100/80 backdrop-blur-xl border-b border-slate-200'}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className={isDark ? 'w-9 h-9 rounded-2xl bg-white text-slate-950 flex items-center justify-center' : 'w-9 h-9 rounded-2xl bg-slate-950 text-white flex items-center justify-center'}>
+                    <Icon name="spark" className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-xl sm:text-2xl font-black">Team Leader Dashboard</h1>
+                </div>
+                <p className={mutedClass(isDark)}>
+                  {user?.username} • {user?.role} • {user?.branch}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button onClick={onToggleTheme} className={iconButtonClass(isDark)} title="Toggle theme">
+                  <Icon name={theme === 'dark' ? 'sun' : 'moon'} className="w-5 h-5" />
+                </button>
+
+                <button onClick={onLogout} className={iconButtonClass(isDark)} title="Logout">
+                  <Icon name="logout" className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function MacDock({ isDark, activeMenu, setActiveMenu }) {
+      const menus = [
+        { key: 'dashboard', label: 'Dashboard', icon: 'chart' },
+        { key: 'input', label: 'Input', icon: 'edit' },
+        { key: 'records', label: 'Records', icon: 'database' },
+        { key: 'settings', label: 'Settings', icon: 'settings' },
+        { key: 'profile', label: 'Profile', icon: 'user' },
+      ];
+
+      return (
+        <nav className="fixed left-0 right-0 z-40 flex justify-center px-4 dock-pop" style={{ bottom: 'var(--dock-bottom)' }}>
+          <div className={(isDark ? 'dock-glass-dark border-white/15 shadow-black/40' : 'dock-glass-light border-white shadow-slate-300/60') + ' border shadow-2xl rounded-[2rem] px-3 py-3 flex items-end gap-2 max-w-full overflow-x-auto custom-scroll'}>
+            {menus.map(menu => {
+              const active = activeMenu === menu.key;
+
+              return (
+                <button
+                  key={menu.key}
+                  onClick={() => setActiveMenu(menu.key)}
+                  className={`group relative flex flex-col items-center justify-center rounded-3xl transition-all duration-300 shrink-0 ${
+                    active
+                      ? isDark
+                        ? 'w-20 h-20 bg-white text-slate-950 -translate-y-3 shadow-xl'
+                        : 'w-20 h-20 bg-slate-950 text-white -translate-y-3 shadow-xl'
+                      : isDark
+                        ? 'w-16 h-16 bg-white/10 text-white/70 hover:bg-white/15 hover:-translate-y-2'
+                        : 'w-16 h-16 bg-slate-950/5 text-slate-600 hover:bg-slate-950/10 hover:-translate-y-2'
+                  }`}
+                >
+                  <Icon name={menu.icon} className={active ? 'w-7 h-7' : 'w-6 h-6'} />
+                  <span className={`text-[10px] font-black mt-1 ${active ? 'opacity-100' : 'opacity-70'}`}>
+                    {menu.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      );
+    }
+
+    function StatCard({ isDark, label, value, icon }) {
+      return (
+        <div className={cardClass(isDark) + ' rounded-3xl p-4 sm:p-5'}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className={mutedClass(isDark)}>{label}</p>
+              <h3 className="text-2xl sm:text-3xl font-black mt-1">{value}</h3>
+            </div>
+            <div className={isDark ? 'w-11 h-11 rounded-2xl bg-white/10 flex items-center justify-center' : 'w-11 h-11 rounded-2xl bg-slate-950/5 flex items-center justify-center'}>
+              <Icon name={icon} className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Input({ isDark, label, value, onChange, type = 'text', placeholder = '', disabled = false }) {
+      return (
+        <div>
+          <label className={isDark ? 'block text-sm text-white/60 mb-2' : 'block text-sm text-slate-500 mb-2'}>
+            {label}
+          </label>
+          <input
+            type={type}
+            value={value}
+            disabled={disabled}
+            placeholder={placeholder}
+            onChange={(e) => onChange(e.target.value)}
+            className={inputClass(isDark, disabled)}
+          />
+        </div>
+      );
+    }
+
+    function Select({ isDark, label, value, onChange, options }) {
+      return (
+        <div>
+          <label className={isDark ? 'block text-sm text-white/60 mb-2' : 'block text-sm text-slate-500 mb-2'}>
+            {label}
+          </label>
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className={inputClass(isDark)}
+          >
+            {options.map(option => (
+              <option key={option.value} value={option.value} className={isDark ? 'bg-slate-900' : 'bg-white'}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    function ResponsiveTable({ isDark, headers, rows, emptyText, maxHeight = '60vh' }) {
+      if (!rows.length) {
+        return <EmptyState isDark={isDark} text={emptyText} />;
+      }
+
+      return (
+        <div className="overflow-hidden rounded-2xl">
+          <div className="overflow-auto custom-scroll" style={{ maxHeight }}>
+            <table className="w-full min-w-[900px] text-sm">
+              <thead className={isDark ? 'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-xl' : 'sticky top-0 z-10 bg-white/95 backdrop-blur-xl'}>
+                <tr className={isDark ? 'text-left text-white/45 border-b border-white/10' : 'text-left text-slate-500 border-b border-slate-200'}>
+                  {headers.map(header => (
+                    <th key={header} className="py-3 pr-4 font-bold first:pl-1">
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row, rowIndex) => (
+                  <tr key={rowIndex} className={isDark ? 'border-b border-white/5' : 'border-b border-slate-100'}>
+                    {row.map((cell, cellIndex) => (
+                      <td key={cellIndex} className="py-3 pr-4 first:pl-1">
+                        {cell || '-'}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function ConfirmDialog({ dialog, isDark, onClose }) {
+      if (!dialog) return null;
+
+      const isDanger = dialog.tone === 'danger';
+      const isSuccess = dialog.tone === 'success';
+
+      const iconClass = isDanger
+        ? 'bg-red-500/15 text-red-500 border-red-500/20'
+        : isSuccess
+          ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20'
+          : isDark
+            ? 'bg-white/10 text-white border-white/10'
+            : 'bg-slate-950/5 text-slate-950 border-slate-200';
+
+      const confirmClass = isDanger
+        ? 'bg-red-500 text-white hover:bg-red-600'
+        : isSuccess
+          ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+          : isDark
+            ? 'bg-white text-slate-950 hover:bg-slate-200'
+            : 'bg-slate-950 text-white hover:bg-slate-800';
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 py-6">
+          <div onClick={onClose} className="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
+
+          <div className={cardClass(isDark) + ' relative w-full max-w-md rounded-[2rem] p-6 modal-pop'}>
+            <div className={`w-14 h-14 rounded-3xl border flex items-center justify-center mb-5 ${iconClass}`}>
+              <Icon name={isDanger ? 'trash' : isSuccess ? 'check' : 'spark'} className="w-7 h-7" />
+            </div>
+
+            <h3 className="text-xl font-black mb-2">{dialog.title}</h3>
+            <p className={mutedClass(isDark) + ' leading-relaxed mb-6'}>{dialog.message}</p>
+
+            <div className="flex gap-3">
+              <button onClick={onClose} className={secondaryButtonClass(isDark) + ' flex-1'}>
+                {dialog.cancelText}
+              </button>
+
+              <button
+                onClick={dialog.onConfirm}
+                className={`h-11 px-5 rounded-2xl font-black transition active:scale-[0.98] flex-1 ${confirmClass}`}
+              >
+                {dialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Toast({ toast, isDark }) {
+      if (!toast) return null;
+
+      const isSuccess = toast.type === 'success';
+
+      const boxClass = isSuccess
+        ? isDark
+          ? 'bg-emerald-500/15 text-emerald-100 border-emerald-400/20'
+          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        : isDark
+          ? 'bg-red-500/15 text-red-100 border-red-400/20'
+          : 'bg-red-50 text-red-700 border-red-200';
+
+      return (
+        <div className="fixed left-4 right-4 bottom-32 z-50 flex justify-center pointer-events-none">
+          <div className={`toast-in pointer-events-auto max-w-md w-full rounded-3xl border px-4 py-4 shadow-2xl backdrop-blur-xl ${boxClass}`}>
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5">
+                <Icon name={isSuccess ? 'check' : 'alert'} className="w-5 h-5" />
+              </div>
+              <p className="text-sm font-bold leading-relaxed">{toast.text}</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function StatusPill({ isSaved, isEdited }) {
+      let text = 'New';
+      let cls = 'bg-blue-500/15 text-blue-500 border-blue-500/20';
+
+      if (isSaved && isEdited) {
+        text = 'Edited';
+        cls = 'bg-amber-500/15 text-amber-500 border-amber-500/20';
+      } else if (isSaved) {
+        text = 'Saved';
+        cls = 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20';
+      }
+
+      return (
+        <span className={`inline-flex h-8 items-center px-3 rounded-full border text-xs font-black ${cls}`}>
+          {text}
+        </span>
+      );
+    }
+
+    function SupplyLegend({ settings }) {
+      return (
+        <div className="flex flex-wrap gap-2 text-xs font-black">
+          <span className="px-3 py-2 rounded-full bg-red-500/15 text-red-500 border border-red-500/20">≤ {settings.lowMax}</span>
+          <span className="px-3 py-2 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">{settings.mediumMin}-{settings.mediumMax}</span>
+          <span className="px-3 py-2 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/20">≥ {settings.highMin}</span>
+        </div>
+      );
+    }
+
+    function PreviewColor({ label, value, className }) {
+      return (
+        <div className={`rounded-3xl border p-5 ${className}`}>
+          <p className="text-sm font-black">{label}</p>
+          <h3 className="text-4xl font-black mt-2">{value}</h3>
+        </div>
+      );
+    }
+
+    function EmptyState({ isDark, text }) {
+      return (
+        <div className={softBoxClass(isDark) + ' rounded-3xl p-8 text-center'}>
+          <div className="mx-auto w-14 h-14 rounded-3xl flex items-center justify-center mb-4 bg-slate-500/10">
+            <Icon name="empty" className="w-7 h-7 opacity-60" />
+          </div>
+          <p className={mutedClass(isDark)}>{text}</p>
+        </div>
+      );
+    }
+
+    function InfoBox({ isDark, label, value }) {
+      return (
+        <div className={softBoxClass(isDark) + ' rounded-2xl p-4'}>
+          <p className={mutedClass(isDark)}>{label}</p>
+          <p className="font-black mt-1">{value || '-'}</p>
+        </div>
+      );
+    }
+
+    function BackgroundGlow({ isDark }) {
+      return (
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <div className={`absolute -top-24 -left-24 w-72 h-72 rounded-full blur-3xl ${isDark ? 'bg-blue-500/20' : 'bg-blue-300/40'}`}></div>
+          <div className={`absolute top-1/3 -right-24 w-80 h-80 rounded-full blur-3xl ${isDark ? 'bg-emerald-500/10' : 'bg-emerald-300/35'}`}></div>
+          <div className={`absolute -bottom-32 left-1/3 w-80 h-80 rounded-full blur-3xl ${isDark ? 'bg-purple-500/10' : 'bg-purple-300/30'}`}></div>
+        </div>
+      );
+    }
+
+    function getSupplyColorClass(value, settings, type) {
+      if (value === '' || value === null || value === undefined) {
+        return type === 'bar'
+          ? 'rounded-t-xl bg-slate-400/20'
+          : 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-slate-500/10 text-slate-400 border border-slate-500/10 font-black';
+      }
+
+      const number = Number(value);
+
+      if (isNaN(number)) {
+        return 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-slate-500/10 text-slate-400 border border-slate-500/10 font-black';
+      }
+
+      if (number <= Number(settings.lowMax)) {
+        return type === 'bar'
+          ? 'rounded-t-xl bg-red-500/70'
+          : 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-red-500/15 text-red-500 border border-red-500/20 font-black';
+      }
+
+      if (number >= Number(settings.mediumMin) && number <= Number(settings.mediumMax)) {
+        return type === 'bar'
+          ? 'rounded-t-xl bg-amber-500/70'
+          : 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-amber-500/15 text-amber-500 border border-amber-500/20 font-black';
+      }
+
+      if (number >= Number(settings.highMin)) {
+        return type === 'bar'
+          ? 'rounded-t-xl bg-emerald-500/70'
+          : 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-emerald-500/15 text-emerald-500 border border-emerald-500/20 font-black';
+      }
+
+      return type === 'bar'
+        ? 'rounded-t-xl bg-slate-400/40'
+        : 'inline-flex min-w-8 h-8 items-center justify-center rounded-xl px-2 bg-slate-500/10 text-slate-400 border border-slate-500/10 font-black';
+    }
+
+    function Icon({ name, className = 'w-5 h-5' }) {
+      const icons = {
+        chart: (
+          <>
+            <path d="M3 3v18h18" />
+            <path d="M7 16V9" />
+            <path d="M12 16V5" />
+            <path d="M17 16v-3" />
+          </>
+        ),
+        layers: (
+          <>
+            <path d="M12 3 3 8l9 5 9-5-9-5Z" />
+            <path d="m3 13 9 5 9-5" />
+            <path d="m3 18 9 5 9-5" />
+          </>
+        ),
+        paper: (
+          <>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M8 13h8" />
+            <path d="M8 17h6" />
+          </>
+        ),
+        printer: (
+          <>
+            <path d="M6 9V2h12v7" />
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+            <path d="M6 14h12v8H6z" />
+          </>
+        ),
+        edit: (
+          <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+        ),
+        database: (
+          <>
+            <ellipse cx="12" cy="5" rx="8" ry="3" />
+            <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
+            <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+          </>
+        ),
+        settings: (
+          <>
+            <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 7.03 3.84l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.36.5.72 1 .9.33.12.7.1 1.1.1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z" />
+          </>
+        ),
+        user: (
+          <>
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
+          </>
+        ),
+        check: (
+          <path d="m20 6-11 11-5-5" />
+        ),
+        alert: (
+          <>
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+            <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+          </>
+        ),
+        trash: (
+          <>
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M19 6l-1 14H6L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+          </>
+        ),
+        sun: (
+          <>
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+          </>
+        ),
+        moon: (
+          <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+        ),
+        logout: (
+          <>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <path d="M16 17l5-5-5-5" />
+            <path d="M21 12H9" />
+          </>
+        ),
+        spark: (
+          <path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5L12 2Z" />
+        ),
+        empty: (
+          <>
+            <path d="M21 16V8a2 2 0 0 0-1-1.73L13 2.27a2 2 0 0 0-2 0L4 6.27A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+            <path d="M3.3 7 12 12l8.7-5" />
+            <path d="M12 22V12" />
+          </>
+        ),
+      };
+
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          {icons[name] || icons.spark}
+        </svg>
+      );
+    }
+
+    function cardClass(isDark) {
+      return isDark
+        ? 'glass-dark border border-white/10 shadow-2xl shadow-black/20'
+        : 'glass-light border border-white shadow-xl shadow-slate-300/40';
+    }
+
+    function softBoxClass(isDark) {
+      return isDark
+        ? 'bg-white/5 border border-white/10'
+        : 'bg-slate-950/5 border border-slate-200';
+    }
+
+    function mutedClass(isDark) {
+      return isDark
+        ? 'text-sm text-white/50'
+        : 'text-sm text-slate-500';
+    }
+
+    function badgeClass(isDark) {
+      return isDark
+        ? 'inline-flex h-9 items-center px-4 rounded-full bg-white/10 border border-white/10 text-white/80 text-sm font-black'
+        : 'inline-flex h-9 items-center px-4 rounded-full bg-slate-950/5 border border-slate-200 text-slate-700 text-sm font-black';
+    }
+
+    function inputClass(isDark, disabled = false) {
+      if (disabled) {
+        return isDark
+          ? 'w-full h-11 rounded-2xl bg-white/5 border border-white/10 text-white/40 px-4 outline-none cursor-not-allowed'
+          : 'w-full h-11 rounded-2xl bg-slate-100 border border-slate-200 text-slate-400 px-4 outline-none cursor-not-allowed';
+      }
+
+      return isDark
+        ? 'w-full h-11 rounded-2xl bg-white/10 border border-white/10 text-white placeholder-white/30 px-4 outline-none focus:ring-2 focus:ring-white/30 transition'
+        : 'w-full h-11 rounded-2xl bg-white border border-slate-200 text-slate-950 placeholder-slate-400 px-4 outline-none focus:ring-2 focus:ring-slate-300 transition';
+    }
+
+    function primaryButtonClass(isDark) {
+      return isDark
+        ? 'w-full h-11 rounded-2xl bg-white text-slate-950 font-black hover:bg-slate-200 active:scale-[0.98] transition disabled:opacity-60'
+        : 'w-full h-11 rounded-2xl bg-slate-950 text-white font-black hover:bg-slate-800 active:scale-[0.98] transition disabled:opacity-60';
+    }
+
+    function secondaryButtonClass(isDark) {
+      return isDark
+        ? 'h-11 px-4 rounded-2xl bg-white/10 border border-white/10 text-white font-black hover:bg-white/15 transition'
+        : 'h-11 px-4 rounded-2xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50 transition';
+    }
+
+    function iconButtonClass(isDark) {
+      return isDark
+        ? 'w-11 h-11 rounded-2xl bg-white/10 border border-white/10 text-white hover:bg-white/15 flex items-center justify-center transition'
+        : 'w-11 h-11 rounded-2xl bg-white border border-slate-200 text-slate-950 hover:bg-slate-50 flex items-center justify-center transition';
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
